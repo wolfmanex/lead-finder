@@ -1,0 +1,3 @@
+# Lead Finder exclusion list: one registry code or e-mail per line.
+# Existing clients and everyone who opted out of campaigns. Lines starting with # are ignored.
+# Edit this file on GitHub; the app picks up the change after it redeploys (about a minute).
