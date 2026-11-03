@@ -318,17 +318,21 @@ def build_fin(con: sqlite3.Connection) -> str:
     ly, lq, _ = next(r for r in counts if r[2] >= biggest * 0.5)
     last = ly * 4 + (lq - 1)
     first = last - 3
+    # One pass over the window: sum turnover per company and take the latest quarter's employee count.
     con.execute("""
       CREATE TABLE fin AS
+      WITH w AS (
+        SELECT kood, kaive, tootajad, maakond, nimi,
+               ROW_NUMBER() OVER (PARTITION BY kood
+                                  ORDER BY (tootajad IS NULL), aasta DESC, kvartal DESC) AS rn
+        FROM tax WHERE (aasta*4 + kvartal - 1) BETWEEN ? AND ?)
       SELECT kood,
              SUM(kaive) AS turnover_12m,
              COUNT(kaive) AS quarters_12m,
-             (SELECT t2.tootajad FROM tax t2 WHERE t2.kood = t.kood AND t2.tootajad IS NOT NULL
-                AND (t2.aasta*4 + t2.kvartal - 1) BETWEEN ? AND ?
-              ORDER BY t2.aasta DESC, t2.kvartal DESC LIMIT 1) AS employees,
+             MAX(CASE WHEN rn = 1 THEN tootajad END) AS employees,
              MAX(maakond) AS emta_county, MAX(nimi) AS emta_name
-      FROM tax t WHERE (aasta*4 + kvartal - 1) BETWEEN ? AND ?
-      GROUP BY kood""", (first, last, first, last))
+      FROM w GROUP BY kood""", (first, last))
+    con.execute("CREATE UNIQUE INDEX ix_fin_kood ON fin(kood)")
     fy, fq = divmod(first, 4)
     label = f"{fy} Q{fq + 1} – {ly} Q{lq}"
     return label
@@ -350,7 +354,9 @@ def build(files: dict[str, Path], progress=None) -> dict:
     stats["persons"] = load_persons(con, files["persons"], say)
     say("Reading EMTA turnover and employees…")
     stats["tax_rows"] = load_tax(con, files["tax_current"], say)
+    say("Calculating turnover and employees per company…")
     stats["turnover_period"] = build_fin(con)
+    say("Indexing…")
     con.executescript(INDEXES)
     stats["emtak_coverage"] = round(con.execute(
         "SELECT avg(emtak_main IS NOT NULL) FROM company WHERE staatus='R'").fetchone()[0] or 0, 3)
