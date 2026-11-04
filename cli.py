@@ -35,8 +35,9 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if a.cmd == "update":
-        files = fetch.fetch_all(force=a.force, offline=a.offline)
-        stats = build.build(files)
+        say = lambda m: print(m, flush=True)  # noqa: E731 - the web app reads these lines as progress
+        files = fetch.fetch_all(force=a.force, offline=a.offline, progress=say)
+        stats = build.build(files, progress=say)
         for k, v in stats.items():
             print(f"{k:>18}: {v}")
     else:
