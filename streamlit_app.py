@@ -1,13 +1,13 @@
 """Lead Finder - Estonian company contacts from Äriregister + EMTA open data (Streamlit app)."""
 from __future__ import annotations
 
+import html
 import logging
 import threading
 import time
 from contextlib import closing
 from datetime import datetime
 
-import pandas as pd
 import streamlit as st
 
 from leadfinder import build, fetch
@@ -18,6 +18,41 @@ from leadfinder.query import (COMPANY_COLUMNS, CONTACT_COLUMNS, Filters, connect
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 st.set_page_config(page_title="Lead Finder – Estonian companies", page_icon="🔎", layout="wide")
+
+
+# ------------------------------------------------------------------ tables as plain HTML
+# Streamlit downloads the code for st.dataframe and st.metric separately when they first appear, and on
+# Community Cloud those downloads sometimes fail ("Failed to fetch dynamically imported module"). Markdown
+# is built into Streamlit's main page, so results are shown through st.markdown instead.
+TABLE_CSS = """<style>
+.lf-wrap{overflow:auto;max-height:560px;border:1px solid #E4E5E8;border-radius:8px}
+.lf-wrap table{border-collapse:collapse;font-size:13px;width:max-content;min-width:100%;margin:0}
+.lf-wrap th{position:sticky;top:0;background:#FAFAF8;text-align:left;padding:6px 10px;border-bottom:1px solid #E4E5E8;white-space:nowrap}
+.lf-wrap td{padding:5px 10px;border-bottom:1px solid #F0F0EE;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+.lf-wrap td.n{text-align:right}
+</style>"""
+PREVIEW_ROWS = 500
+
+
+def html_table(headers: list[str], rows: list[list], limit: int = PREVIEW_ROWS) -> str:
+    def cell(h, v):
+        if v is None or v == "":
+            return "<td></td>"
+        if h == "Äriregister link":
+            return f'<td><a href="{html.escape(str(v))}" target="_blank">open</a></td>'
+        if isinstance(v, (int, float)):
+            return f'<td class="n">{v:,.0f}</td>'.replace(",", " ")
+        t = html.escape(str(v))
+        return f'<td title="{t}">{t}</td>'
+    head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(cell(h, v) for h, v in zip(headers, r)) + "</tr>" for r in rows[:limit])
+    return f'{TABLE_CSS}<div class="lf-wrap"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def show_table(headers: list[str], rows: list[list]):
+    st.markdown(html_table(headers, rows), unsafe_allow_html=True)
+    if len(rows) > PREVIEW_ROWS:
+        st.caption(f"Showing the first {PREVIEW_ROWS:,} of {len(rows):,} rows. The Excel file has all of them.")
 
 
 # ------------------------------------------------------------------ data refresh (one per server)
@@ -80,11 +115,10 @@ def load_meta_and_options(db_mtime: float) -> tuple[dict, dict]:
 
 
 @st.cache_data(show_spinner=False, max_entries=50)
-def lookup(db_mtime: float, q: str) -> pd.DataFrame:
+def lookup(db_mtime: float, q: str) -> list[list]:
     with closing(connect()) as con:
         rows = emtak_lookup(con, q)
-    return pd.DataFrame([{"EMTAK": r["code"], "Activity": r["activity"], "Companies": r["companies"],
-                          "As main activity": r["as_main"]} for r in rows])
+    return [[r["code"], r["activity"], r["companies"], r["as_main"]] for r in rows]
 
 
 # ------------------------------------------------------------------ first start: wait for data
@@ -171,22 +205,16 @@ if submitted:
 
 if "result" in st.session_state:
     contacts, companies, desc = st.session_state["result"]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Companies", f"{len(companies):,}")
-    c2.metric("Contact persons", f"{len(contacts):,}")
-    c3.metric("Companies with e-mail", f"{sum(1 for c in companies if c.get('emails')):,}")
+    n_email = sum(1 for c in companies if c.get("emails"))
+    st.markdown(f"### {len(companies):,} companies · {len(contacts):,} contact persons · {n_email:,} with e-mail")
     st.download_button("⬇ Download Excel", data=lambda: to_excel(contacts, companies, desc),
                        file_name=f"leads_{datetime.now():%Y-%m-%d}.xlsx", type="primary", on_click="ignore",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    colcfg = {"Turnover last 4 quarters (EUR)": st.column_config.NumberColumn(format="%d"),
-              "Äriregister link": st.column_config.LinkColumn(display_text="open")}
     t1, t2 = st.tabs(["Contacts (one row per person)", "Companies"])
     with t1:
-        h, rows = table(contacts, CONTACT_COLUMNS)
-        st.dataframe(pd.DataFrame(rows, columns=h), hide_index=True, width="stretch", column_config=colcfg)
+        show_table(*table(contacts, CONTACT_COLUMNS))
     with t2:
-        h, rows = table(companies, COMPANY_COLUMNS)
-        st.dataframe(pd.DataFrame(rows, columns=h), hide_index=True, width="stretch", column_config=colcfg)
+        show_table(*table(companies, COMPANY_COLUMNS))
     st.caption(f"Filters: {desc}")
 else:
     st.info("Set filters in the sidebar and press **Search**.")
@@ -194,7 +222,11 @@ else:
 with st.expander("Look up EMTAK codes"):
     q = st.text_input("Code prefix or activity words", placeholder="e.g. 473 or kütus")
     if q:
-        st.dataframe(lookup(db_mtime, q), hide_index=True, width="stretch")
+        found = lookup(db_mtime, q)
+        if found:
+            show_table(["EMTAK", "Activity", "Companies", "As main activity"], found)
+        else:
+            st.caption("No matching codes.")
 
 st.caption("Turnover = EMTA taxable turnover over the latest 4 published quarters (not annual-report revenue). "
            "Employees = latest quarter. Contacts = people on the registry card. Company mailboxes and contacts "
