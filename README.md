@@ -12,6 +12,16 @@ Outreach lists of Estonian companies, built from free official open data instead
 Results show in the app and download as Excel, with a **Contacts** sheet (one row per person), a **Companies**
 sheet and an **About** sheet that records the filters used.
 
+## Run it on your own Windows PC (nothing to install)
+
+1. Download **LeadFinder-Windows.zip** from the repository's **Releases** page (*Lead Finder for Windows*).
+2. Unzip it, for example into `Documents`.
+3. Double-click **Start Lead Finder**. Your browser opens the app, and the first start prepares the data (a few minutes).
+
+Keep the black window open while you use the tool; close it to stop. Everything stays in that folder, including the
+data and `exclude.txt`. If Windows shows "Windows protected your PC", click **More info → Run anyway**. The ZIP has
+its own Python, so no installation or admin rights are needed. A new ZIP is built every time `main` changes.
+
 ## Deploy on Streamlit Community Cloud (once)
 
 1. Sign in at https://share.streamlit.io with GitHub.

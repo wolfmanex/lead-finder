@@ -1,3 +1,4 @@
 streamlit==1.66.1
 pandas>=2.0
 openpyxl>=3.1
+pyarrow<25  # 25.x has a known crash (apache/arrow#50471)
