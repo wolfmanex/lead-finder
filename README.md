@@ -24,6 +24,13 @@ On first start, and after the app has been asleep (no visitors for 12 hours), th
 data. That takes 5–15 minutes and the app shows progress while it runs. Data also refreshes automatically when it's
 older than 7 days, or on demand with **Refresh data now** in the sidebar.
 
+## If widgets show "Failed to fetch dynamically imported module"
+
+The browser is still holding a copy of the page from before the app's Streamlit version changed, and asks for widget
+files that no longer exist. Fix: reload the page with Ctrl + F5 (on a phone, close the tab and open the link again).
+To avoid it, Streamlit is pinned to one version in `requirements.txt`. Change that number only on purpose, and expect
+open tabs to need one reload afterwards.
+
 ## Exclusion list
 
 `exclude.txt` holds registry codes or e-mails, one per line, for existing clients and anyone who opted out. Edit it on
