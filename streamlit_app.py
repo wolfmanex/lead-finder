@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import html
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 from contextlib import closing
@@ -10,8 +13,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from leadfinder import build, fetch
-from leadfinder.config import DB_PATH, DEFAULT_ROLES, EXCLUDE_PATH, REFRESH_DAYS, ROLE_LABELS
+from leadfinder.config import DB_PATH, ROOT, DEFAULT_ROLES, EXCLUDE_PATH, REFRESH_DAYS, ROLE_LABELS
 from leadfinder.export import to_excel
 from leadfinder.query import (COMPANY_COLUMNS, CONTACT_COLUMNS, Filters, connect, emtak_lookup, meta, options,
                               read_exclusions, search, table)
@@ -57,7 +59,11 @@ def show_table(headers: list[str], rows: list[list]):
 
 # ------------------------------------------------------------------ data refresh (one per server)
 class DataManager:
-    """Builds the database in a background thread, shared by every visitor of this server."""
+    """Builds the database for every visitor of this server, in a separate process.
+
+    The build parses about 1.5 GB of JSON. Run in a thread of this process, it holds Python's GIL and starves the
+    web server, so the browser's requests for Streamlit's widget files time out ("Failed to fetch dynamically
+    imported module"). A child process (`cli.py update`, at low CPU priority) leaves the web server responsive."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -87,10 +93,20 @@ class DataManager:
         self.log = (self.log + [msg])[-6:]
 
     def _run(self, force: bool):
+        cmd = [sys.executable, "-u", str(ROOT / "cli.py"), "update"] + (["--force"] if force else [])
+        low = (dict(preexec_fn=lambda: os.nice(10)) if hasattr(os, "nice")
+               else dict(creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)))
         try:
-            files = fetch.fetch_all(force=force, progress=self._say)
-            stats = build.build(files, progress=self._say)
-            self._say(f"Ready: {stats['companies']:,} companies, {stats['persons']:,} persons.")
+            p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                 encoding="utf-8", errors="replace", bufsize=1, **low)
+            tail: list[str] = []
+            for line in p.stdout:
+                line = line.rstrip()
+                if line:
+                    tail = (tail + [line])[-15:]
+                    self._say(line)
+            if p.wait() != 0:
+                raise RuntimeError("\n".join(tail) or f"Data update exited with code {p.returncode}")
             st.cache_data.clear()
         except Exception as e:  # noqa: BLE001
             logging.exception("Data update failed")
@@ -132,7 +148,7 @@ if not DB_PATH.exists():
         if mgr.running:
             st.info("**Preparing data.** The server is downloading and processing the official open data "
                     "(about 400 MB). This takes 5–15 minutes after the app has been asleep. You can leave this tab open.")
-            st.code("\n".join(mgr.log) or "Starting…", language=None)
+            st.text("\n".join(mgr.log) or "Starting…")
         elif mgr.error:
             st.error(f"Data preparation failed:\n\n{mgr.error}")
             if st.button("Try again"):
