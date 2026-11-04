@@ -1,0 +1,79 @@
+name: Build Windows ZIP
+
+# Builds LeadFinder-Windows.zip: the app plus its own Python, so it runs on a Windows PC
+# without installing anything. Every push to main publishes it on the "latest" release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Assemble the folder
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = python -c "import platform; print(platform.python_version())"
+          $out = "dist/LeadFinder"
+          New-Item -ItemType Directory -Force "$out/python" | Out-Null
+          # Embeddable Python (no installer, no admin rights) of exactly the same version
+          Invoke-WebRequest "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip" -OutFile py.zip
+          Expand-Archive py.zip "$out/python"
+          # Let the embedded Python find installed packages and the app's own folder
+          $pth = Get-ChildItem "$out/python/python*._pth" | Select-Object -First 1
+          Set-Content $pth.FullName "$($pth.BaseName).zip`n.`nLib\site-packages`n..`nimport site"
+          python -m pip install --no-cache-dir --target "$out/python/Lib/site-packages" -r requirements.txt
+          Copy-Item streamlit_app.py, cli.py, exclude.txt, README.md $out
+          Copy-Item -Recurse leadfinder, .streamlit, tests $out
+          Copy-Item tools/start_lead_finder.bat "$out/Start Lead Finder.bat"
+
+      - name: Test the folder works (sample data, start the app, check it answers)
+        run: |
+          $ErrorActionPreference = "Stop"
+          $py = "dist/LeadFinder/python/python.exe"
+          Push-Location dist/LeadFinder
+          & python/python.exe tests/make_sample_data.py data/raw
+          & python/python.exe cli.py update --offline
+          & python/python.exe cli.py export --emtak 4730,4671 --turnover-min 1000000 -o test.xlsx
+          if (-not (Test-Path test.xlsx)) { throw "export failed" }
+          $p = Start-Process python/python.exe -ArgumentList "-m streamlit run streamlit_app.py --server.headless true --server.port 8599" -PassThru
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep 2
+            try { $r = Invoke-WebRequest http://localhost:8599/_stcore/health -UseBasicParsing; if ($r.Content -match "ok") { $ok = $true; break } } catch {}
+          }
+          $page = Invoke-WebRequest http://localhost:8599/ -UseBasicParsing
+          Stop-Process $p -Force
+          if (-not $ok -or $page.StatusCode -ne 200) { throw "Streamlit did not start" }
+          Remove-Item -Recurse -Force data, test.xlsx
+          Pop-Location
+
+      - name: Zip
+        run: Compress-Archive dist/LeadFinder LeadFinder-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LeadFinder-Windows
+          path: LeadFinder-Windows.zip
+
+      - name: Publish on the "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          gh release create latest LeadFinder-Windows.zip --title "Lead Finder for Windows" --notes "Download LeadFinder-Windows.zip, unzip it, and double-click 'Start Lead Finder'. Nothing to install."
