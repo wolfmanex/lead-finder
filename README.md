@@ -41,6 +41,11 @@ files that no longer exist. Fix: reload the page with Ctrl + F5 (on a phone, clo
 To avoid it, Streamlit is pinned to one version in `requirements.txt`. Change that number only on purpose, and expect
 open tabs to need one reload afterwards.
 
+Streamlit is pinned to **1.56.0**, the last release on the Tornado web server. From 1.57 Streamlit runs on a new
+Starlette/Uvicorn server, and on Community Cloud those versions (1.65 and 1.66 were tried) kept failing to load widget
+files, or the page never connected at all, in every browser and on mobile. Don't upgrade past 1.56 without testing it
+on Cloud first.
+
 ## Exclusion list
 
 `exclude.txt` holds registry codes or e-mails, one per line, for existing clients and anyone who opted out. Edit it on
